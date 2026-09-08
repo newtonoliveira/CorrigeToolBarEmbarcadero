@@ -1,0 +1,200 @@
+program corrigeToolBarIdeEmbarcadero;
+
+{$APPTYPE CONSOLE}
+
+uses
+  System.SysUtils,
+  System.Win.Registry,
+  Winapi.Windows,
+  Winapi.ShlwApi,
+  Winapi.TlHelp32;
+
+const
+  REG_ROOT_HIVE   = HKEY_CURRENT_USER;
+  REG_PARENT_PATH = '\Software\Embarcadero\BDS\37.0\';
+  REG_KEY_NAME    = 'Toolbars';
+  REG_FULL_PATH   = REG_PARENT_PATH + '\' + REG_KEY_NAME;
+
+  IDE_PROCESS_NAME = 'bds.exe'; // processo do RAD Studio / Delphi (2007 em diante)
+
+{ ---------------------------------------------------------------------------
+  Codigo de confirmacao do momento:
+    codigo = dia atual  (2 digitos, com zero a esquerda) +
+             minuto atual (2 digitos, com zero a esquerda)
+
+  Exemplo: dia 8, as 14:35  ->  codigo = "0835"
+
+  O codigo NAO precisa ser calculado de cabeca pelo usuario: ele e exibido
+  na propria tela, embutido em um dos avisos abaixo, em uma posicao/frase
+  sorteada a cada execucao. O objetivo nao e autenticar ninguem de verdade,
+  e sim obrigar quem esta rodando o utilitario a LER o aviso ate encontrar
+  o codigo, em vez de simplesmente apertar teclas as cegas antes de uma
+  operacao irreversivel.
+---------------------------------------------------------------------------- }
+
+function GetCodigoAtual: string;
+var
+  Agora: TDateTime;
+  Ano, Mes, Dia, Hora, Minuto, Segundo, MSec: Word;
+begin
+  Agora := Now;
+  DecodeDate(Agora, Ano, Mes, Dia);
+  DecodeTime(Agora, Hora, Minuto, Segundo, MSec);
+  Result := Format('%.2d%.2d', [Dia, Minuto]);
+end;
+
+procedure ShowBanner;
+begin
+  Writeln('#...#  .###.  #...#  .###.');
+  Writeln('##..#  #....  #...#  #...#');
+  Writeln('#.#.#  #....  #...#  #....');
+  Writeln('#..##  #.##.  #####  #....');
+  Writeln('#...#  #...#  #...#  #....');
+  Writeln('#...#  #...#  #...#  #...#');
+  Writeln('#...#  .###.  #...#  .###.');
+  Writeln;
+end;
+
+function IsProcessRunning(const ProcessName: string): Boolean;
+var
+  Snapshot: THandle;
+  ProcEntry: TProcessEntry32;
+begin
+  Result := False;
+  Snapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if Snapshot = INVALID_HANDLE_VALUE then
+    Exit;
+  try
+    ProcEntry.dwSize := SizeOf(TProcessEntry32);
+    if Process32First(Snapshot, ProcEntry) then
+    begin
+      repeat
+        if SameText(ProcEntry.szExeFile, ProcessName) then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not Process32Next(Snapshot, ProcEntry);
+    end;
+  finally
+    CloseHandle(Snapshot);
+  end;
+end;
+
+function AguardarIdeFechada: Boolean;
+var
+  Resposta: string;
+begin
+  Result := True;
+  while IsProcessRunning(IDE_PROCESS_NAME) do
+  begin
+    Writeln('A IDE do RAD Studio / Delphi (' + IDE_PROCESS_NAME + ') esta aberta.');
+    Writeln('Feche a IDE antes de continuar, pois ela pode travar as chaves do Toolbar.');
+    Writeln;
+    Write('Pressione ENTER apos fechar a IDE para verificar novamente (ou digite SAIR para cancelar): ');
+    Readln(Resposta);
+    Writeln;
+    if SameText(Trim(Resposta), 'SAIR') then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+function ChaveExiste: Boolean;
+var
+  Reg: TRegistry;
+begin
+  Reg := TRegistry.Create(KEY_READ);
+  try
+    Reg.RootKey := REG_ROOT_HIVE;
+    Result := Reg.KeyExists(REG_FULL_PATH);
+  finally
+    Reg.Free;
+  end;
+end;
+
+function ExcluirChave: Boolean;
+begin
+  Result := SHDeleteKey(REG_ROOT_HIVE, REG_FULL_PATH) = ERROR_SUCCESS;
+end;
+
+procedure MostrarAvisoComCodigo(const Codigo: string);
+var
+  Modelos: array[0..4] of string;
+  Indice: Integer;
+begin
+  Modelos[0] := 'Antes de prosseguir, leia com atencao: o codigo de confirmacao de agora e "%s" e devera ser digitado no proximo passo.';
+  Modelos[1] := 'Esta rotina remove definitivamente a chave do registro indicada acima; se concordar, o codigo "%s" e o que deve ser informado a seguir para confirmar.';
+  Modelos[2] := 'Leia tudo antes de continuar. Se estiver ciente dos riscos, digite o codigo "%s" quando ele for solicitado logo abaixo.';
+  Modelos[3] := 'O procedimento e irreversivel. Guarde o codigo "%s" que aparece nesta linha, pois ele sera pedido na proxima etapa.';
+  Modelos[4] := 'Confirme que leu o aviso acima informando o codigo "%s" no campo que sera exibido em seguida.';
+
+  Randomize;
+  Indice := Random(Length(Modelos));
+  Writeln(Format(Modelos[Indice], [Codigo]));
+  Writeln;
+end;
+
+var
+  CodigoAtual, CodigoDigitado: string;
+
+begin
+  try
+    ShowBanner;
+
+    Writeln('Este utilitario ira EXCLUIR a seguinte chave do registro:');
+    Writeln('  HKEY_CURRENT_USER\' + REG_FULL_PATH);
+    Writeln;
+    Writeln('A exclusao e feita por conta e risco do usuario.');
+    Writeln('Certifique-se de ter um backup do registro antes de continuar.');
+    Writeln;
+
+    if not ChaveExiste then
+    begin
+      Writeln('A chave informada nao foi encontrada no registro. Nada a fazer.');
+      Writeln;
+      Write('Pressione ENTER para sair...');
+      Readln;
+      Exit;
+    end;
+
+    if not AguardarIdeFechada then
+    begin
+      Writeln('Operacao cancelada pelo usuario.');
+      Writeln;
+      Write('Pressione ENTER para sair...');
+      Readln;
+      Exit;
+    end;
+
+    CodigoAtual := GetCodigoAtual;
+    MostrarAvisoComCodigo(CodigoAtual);
+
+    Write('Digite o codigo de confirmacao: ');
+    Readln(CodigoDigitado);
+    CodigoDigitado := Trim(CodigoDigitado);
+    Writeln;
+
+    if CodigoDigitado <> CodigoAtual then
+    begin
+      Writeln('Senha invalida.');
+    end
+    else
+    begin
+      if ExcluirChave then
+        Writeln('Chave excluida com sucesso.')
+      else
+        Writeln('Falha ao excluir a chave. Verifique as permissoes e tente novamente.');
+    end;
+
+  except
+    on E: Exception do
+      Writeln('Erro inesperado: ' + E.ClassName + ' - ' + E.Message);
+  end;
+
+  Writeln;
+  Write('Pressione ENTER para sair...');
+  Readln;
+end.
