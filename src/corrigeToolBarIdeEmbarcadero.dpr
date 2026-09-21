@@ -152,7 +152,7 @@ end;
 
 function ExcluirChave(const CaminhoCompleto: string): Boolean;
 begin
-  Result := SHDeleteKey(REG_ROOT_HIVE, CaminhoCompleto) = ERROR_SUCCESS;
+  Result := SHDeleteKey(REG_ROOT_HIVE, PWideChar(CaminhoCompleto)) = ERROR_SUCCESS;
 end;
 
 function VersaoParaFloat(const Versao: string): Double;
