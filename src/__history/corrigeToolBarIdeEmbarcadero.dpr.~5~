@@ -212,11 +212,15 @@ begin
     end;
 
     // mantem apenas as versoes que realmente possuem a chave Toolbars
-    SetLength(Result,Nomes.Count);
-
     for i := 0 to Nomes.Count - 1 do
-      Result[i] := Nomes[i];
-
+    begin
+      if Reg.OpenKeyReadOnly(REG_BDS_PATH + '\' + Nomes[i] + '\' + REG_KEY_NAME) then
+      begin
+        Reg.CloseKey;
+        SetLength(Result, Length(Result) + 1);
+        Result[High(Result)] := Nomes[i];
+      end;
+    end;
   finally
     Nomes.Free;
     Reg.Free;

@@ -212,11 +212,8 @@ begin
     end;
 
     // mantem apenas as versoes que realmente possuem a chave Toolbars
-    SetLength(Result,Nomes.Count);
-
     for i := 0 to Nomes.Count - 1 do
-      Result[i] := Nomes[i];
-
+        Result[High(Result)] := Nomes[i];
   finally
     Nomes.Free;
     Reg.Free;
