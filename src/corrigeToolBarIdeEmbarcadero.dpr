@@ -4,6 +4,7 @@ program corrigeToolBarIdeEmbarcadero;
 
 uses
   System.SysUtils,
+  System.Classes,
   System.Win.Registry,
   Winapi.Windows,
   Winapi.ShlwApi,
@@ -11,11 +12,45 @@ uses
 
 const
   REG_ROOT_HIVE   = HKEY_CURRENT_USER;
-  REG_PARENT_PATH = 'Software\Embarcadero\BDS\37.0';
+  REG_BDS_PATH    = 'Software\Embarcadero\BDS';
   REG_KEY_NAME    = 'Toolbars';
-  REG_FULL_PATH   = REG_PARENT_PATH + '\' + REG_KEY_NAME;
 
   IDE_PROCESS_NAME = 'bds.exe'; // processo do RAD Studio / Delphi (2007 em diante)
+
+type
+  TVersaoNome = record
+    Versao: string;
+    Nome: string;
+  end;
+
+const
+  // Numero da chave BDS no registro -> nome comercial da versao.
+  // A partir da "13", a Embarcadero unificou a numeracao interna do produto,
+  // pacotes e RTL: RAD Studio 13 Florence (e as atualizacoes 13.1/13.2) usam
+  // a chave "37.0" em vez de "24.0".
+  NOMES_VERSOES: array[0..20] of TVersaoNome = (
+    (Versao: '3.0';  Nome: 'BDS 2005'),
+    (Versao: '4.0';  Nome: 'BDS 2006'),
+    (Versao: '5.0';  Nome: 'RAD Studio 2007'),
+    (Versao: '6.0';  Nome: 'RAD Studio 2009'),
+    (Versao: '7.0';  Nome: 'RAD Studio 2010'),
+    (Versao: '8.0';  Nome: 'RAD Studio XE'),
+    (Versao: '9.0';  Nome: 'RAD Studio XE2'),
+    (Versao: '10.0'; Nome: 'RAD Studio XE3'),
+    (Versao: '11.0'; Nome: 'RAD Studio XE4'),
+    (Versao: '12.0'; Nome: 'RAD Studio XE5'),
+    (Versao: '14.0'; Nome: 'RAD Studio XE6'),
+    (Versao: '15.0'; Nome: 'RAD Studio XE7'),
+    (Versao: '16.0'; Nome: 'RAD Studio XE8'),
+    (Versao: '17.0'; Nome: 'RAD Studio 10 Seattle'),
+    (Versao: '18.0'; Nome: 'RAD Studio 10.1 Berlin'),
+    (Versao: '19.0'; Nome: 'RAD Studio 10.2 Tokyo'),
+    (Versao: '20.0'; Nome: 'RAD Studio 10.3 Rio'),
+    (Versao: '21.0'; Nome: 'RAD Studio 10.4 Sydney'),
+    (Versao: '22.0'; Nome: 'RAD Studio 11 Alexandria'),
+    (Versao: '23.0'; Nome: 'RAD Studio 12 Athens'),
+    (Versao: '37.0'; Nome: 'RAD Studio 13 Florence')
+  );
 
 { ---------------------------------------------------------------------------
   Codigo de confirmacao do momento:
@@ -102,22 +137,134 @@ begin
   end;
 end;
 
-function ChaveExiste: Boolean;
+function ChaveExiste(const CaminhoCompleto: string): Boolean;
 var
   Reg: TRegistry;
 begin
   Reg := TRegistry.Create(KEY_READ);
   try
     Reg.RootKey := REG_ROOT_HIVE;
-    Result := Reg.KeyExists(REG_FULL_PATH);
+    Result := Reg.KeyExists(CaminhoCompleto);
   finally
     Reg.Free;
   end;
 end;
 
-function ExcluirChave: Boolean;
+function ExcluirChave(const CaminhoCompleto: string): Boolean;
 begin
-  Result := SHDeleteKey(REG_ROOT_HIVE, REG_FULL_PATH) = ERROR_SUCCESS;
+  Result := SHDeleteKey(REG_ROOT_HIVE, CaminhoCompleto) = ERROR_SUCCESS;
+end;
+
+function VersaoParaFloat(const Versao: string): Double;
+begin
+  if not TryStrToFloat(StringReplace(Versao, ',', '.', [rfReplaceAll]), Result) then
+    Result := 0;
+end;
+
+procedure OrdenarVersoes(var Versoes: TArray<string>);
+var
+  i, j: Integer;
+  Temp: string;
+begin
+  for i := 0 to High(Versoes) - 1 do
+    for j := 0 to High(Versoes) - i - 1 do
+      if VersaoParaFloat(Versoes[j]) > VersaoParaFloat(Versoes[j + 1]) then
+      begin
+        Temp := Versoes[j];
+        Versoes[j] := Versoes[j + 1];
+        Versoes[j + 1] := Temp;
+      end;
+end;
+
+function NomeAmigavelVersao(const Versao: string): string;
+var
+  i: Integer;
+begin
+  for i := Low(NOMES_VERSOES) to High(NOMES_VERSOES) do
+    if SameText(NOMES_VERSOES[i].Versao, Versao) then
+      Exit(NOMES_VERSOES[i].Nome);
+
+  Result := 'RAD Studio / Delphi versao ' + Versao;
+end;
+
+function DescricaoVersao(const Versao: string): string;
+begin
+  Result := Versao + ' - ' + NomeAmigavelVersao(Versao);
+end;
+
+function ListarVersoesInstaladas: TArray<string>;
+var
+  Reg: TRegistry;
+  Nomes: TStringList;
+  i: Integer;
+begin
+  SetLength(Result, 0);
+  Reg := TRegistry.Create(KEY_READ);
+  Nomes := TStringList.Create;
+  try
+    Reg.RootKey := REG_ROOT_HIVE;
+    if Reg.OpenKeyReadOnly(REG_BDS_PATH) then
+    begin
+      Reg.GetKeyNames(Nomes);
+      Reg.CloseKey;
+    end;
+
+    // mantem apenas as versoes que realmente possuem a chave Toolbars
+    for i := 0 to Nomes.Count - 1 do
+    begin
+      if Reg.OpenKeyReadOnly(REG_BDS_PATH + '\' + Nomes[i] + '\' + REG_KEY_NAME) then
+      begin
+        Reg.CloseKey;
+        SetLength(Result, Length(Result) + 1);
+        Result[High(Result)] := Nomes[i];
+      end;
+    end;
+  finally
+    Nomes.Free;
+    Reg.Free;
+  end;
+
+  OrdenarVersoes(Result);
+end;
+
+function EscolherVersao(const Versoes: TArray<string>): string;
+var
+  i, Opcao, CodigoErro: Integer;
+  Entrada: string;
+begin
+  Result := '';
+
+  if Length(Versoes) = 0 then
+    Exit;
+
+  if Length(Versoes) = 1 then
+  begin
+    Result := Versoes[0];
+    Writeln('Versao do RAD Studio / Delphi encontrada: ' + DescricaoVersao(Result));
+    Writeln;
+    Exit;
+  end;
+
+  Writeln('Foram encontradas ' + IntToStr(Length(Versoes)) + ' versoes do RAD Studio / Delphi com Toolbars no registro.');
+  Writeln('Escolha a versao para resetar o toolbar:');
+  for i := 0 to High(Versoes) do
+    Writeln(Format('  %d. %s', [i + 1, DescricaoVersao(Versoes[i])]));
+  Writeln;
+
+  while True do
+  begin
+    Write('Digite o numero da versao desejada: ');
+    Readln(Entrada);
+    Val(Trim(Entrada), Opcao, CodigoErro);
+    if (CodigoErro = 0) and (Opcao >= 1) and (Opcao <= Length(Versoes)) then
+    begin
+      Result := Versoes[Opcao - 1];
+      Break;
+    end;
+    Writeln('Opcao invalida. Tente novamente.');
+    Writeln;
+  end;
+  Writeln;
 end;
 
 procedure MostrarAvisoComCodigo(const Codigo: string);
@@ -139,19 +286,39 @@ end;
 
 var
   CodigoAtual, CodigoDigitado: string;
+  VersoesInstaladas: TArray<string>;
+  VersaoEscolhida: string;
+  RegFullPath: string;
 
 begin
   try
     ShowBanner;
 
+    VersoesInstaladas := ListarVersoesInstaladas;
+
+    if Length(VersoesInstaladas) = 0 then
+    begin
+      Writeln('Nenhuma versao do RAD Studio / Delphi com chave Toolbars foi encontrada em:');
+      Writeln('  HKEY_CURRENT_USER\' + REG_BDS_PATH);
+      Writeln('Nada a fazer.');
+      Writeln;
+      Write('Pressione ENTER para sair...');
+      Readln;
+      Exit;
+    end;
+
+    VersaoEscolhida := EscolherVersao(VersoesInstaladas);
+    RegFullPath := REG_BDS_PATH + '\' + VersaoEscolhida + '\' + REG_KEY_NAME;
+
+    Writeln('Versao selecionada: ' + DescricaoVersao(VersaoEscolhida));
     Writeln('Este utilitario ira EXCLUIR a seguinte chave do registro:');
-    Writeln('  HKEY_CURRENT_USER\' + REG_FULL_PATH);
+    Writeln('  HKEY_CURRENT_USER\' + RegFullPath);
     Writeln;
     Writeln('A exclusao e feita por conta e risco do usuario.');
     Writeln('Certifique-se de ter um backup do registro antes de continuar.');
     Writeln;
 
-    if not ChaveExiste then
+    if not ChaveExiste(RegFullPath) then
     begin
       Writeln('A chave informada nao foi encontrada no registro. Nada a fazer.');
       Writeln;
@@ -183,7 +350,7 @@ begin
     end
     else
     begin
-      if ExcluirChave then
+      if ExcluirChave(RegFullPath) then
         Writeln('Chave excluida com sucesso.')
       else
         Writeln('Falha ao excluir a chave. Verifique as permissoes e tente novamente.');
